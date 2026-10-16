@@ -11,3 +11,8 @@ Thumbs.db
 
 # Build
 *.exe.bak
+
+# Secrets
+config.ini
+.env
+*.key

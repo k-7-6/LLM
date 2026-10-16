@@ -24,9 +24,7 @@ class Config:
             base_url=os.environ.get(
                 "ANYTHINGLLM_BASE_URL", "http://localhost:3001/api"
             ).rstrip("/"),
-            api_key=os.environ.get(
-                "ANYTHINGLLM_API_KEY", "MBVDT4X-53GM44N-J7V353G-9CZCDFF"
-            ),
+            api_key=os.environ.get("ANYTHINGLLM_API_KEY", ""),
             workspace_slug=os.environ.get(
                 "ANYTHINGLLM_WORKSPACE_SLUG", DEFAULT_WORKSPACE_SLUG
             ),
