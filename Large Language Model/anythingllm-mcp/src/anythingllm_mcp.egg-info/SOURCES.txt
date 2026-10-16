@@ -1,0 +1,12 @@
+pyproject.toml
+src/anythingllm_mcp/__init__.py
+src/anythingllm_mcp/__main__.py
+src/anythingllm_mcp/client.py
+src/anythingllm_mcp/config.py
+src/anythingllm_mcp/server.py
+src/anythingllm_mcp.egg-info/PKG-INFO
+src/anythingllm_mcp.egg-info/SOURCES.txt
+src/anythingllm_mcp.egg-info/dependency_links.txt
+src/anythingllm_mcp.egg-info/entry_points.txt
+src/anythingllm_mcp.egg-info/requires.txt
+src/anythingllm_mcp.egg-info/top_level.txt
