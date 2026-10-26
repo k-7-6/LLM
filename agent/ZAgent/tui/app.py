@@ -21,6 +21,9 @@ TOOL_LABELS = {
     "delete_dir": "删除目录",
     "delete_file": "删除文件",
     "rename": "重命名",
+    "searchWeb": "联网搜索",
+    "fetchWeb": "读取网页",
+    "RunCli": "运行命令行",
 }
 
 
@@ -44,6 +47,8 @@ class ChatApp(App):
     def __init__(self, agent: Agent):
         super().__init__()
         self.agent = agent
+        self._answer: Static | None = None
+        self._answer_text = ""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="topbar"):
@@ -84,32 +89,46 @@ class ChatApp(App):
 
         log = self.query_one("#log", VerticalScroll)
         log.mount(Static(Text(f"你：{text}"), classes="user"))
-        answer = Static("", classes="assistant")
-        log.mount(answer)
         log.scroll_end(animate=False)
 
-        self._stream(text, answer)
+        self._answer = None
+        self._answer_text = ""
+        self._stream(text)
 
     @work(thread=True, exclusive=True)
-    def _stream(self, text: str, answer: Static) -> None:
-        buffer = ""
+    def _stream(self, text: str) -> None:
         try:
             for event in self.agent.ask(text):
                 if isinstance(event, Token):
-                    buffer += event.text
-                    self.call_from_thread(answer.update, Text(buffer))
-                    self.call_from_thread(self._scroll)
+                    self.call_from_thread(self._append, event.text)
                 elif isinstance(event, ToolStarted):
                     self.call_from_thread(self._show_tool, event.name)
         except Exception as exc:
-            self.call_from_thread(answer.update, Text(f"错误: {exc}", style="red"))
+            self.call_from_thread(self._show_error, exc)
         finally:
             self.call_from_thread(self._done)
+
+    def _append(self, text: str) -> None:
+        """按到达顺序追加文本块：工具调用之后的内容会另起一块，排在工具提示下方。"""
+        if self._answer is None:
+            self._answer = Static("", classes="assistant")
+            self._answer_text = ""
+            self.query_one("#log", VerticalScroll).mount(self._answer)
+        self._answer_text += text
+        self._answer.update(Text(self._answer_text))
+        self._scroll()
+
+    def _show_error(self, exc: Exception) -> None:
+        log = self.query_one("#log", VerticalScroll)
+        log.mount(Static(Text(f"错误: {exc}", style="red")))
+        log.scroll_end(animate=False)
 
     def _scroll(self) -> None:
         self.query_one("#log", VerticalScroll).scroll_end(animate=False)
 
     def _show_tool(self, name: str) -> None:
+        self._answer = None
+        self._answer_text = ""
         log = self.query_one("#log", VerticalScroll)
         log.mount(Static(Text(f"[工具] {TOOL_LABELS.get(name, name)}", style="dim")))
         log.scroll_end(animate=False)

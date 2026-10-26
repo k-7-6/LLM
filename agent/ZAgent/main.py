@@ -2,8 +2,12 @@ import argparse
 import sys
 import traceback
 
+# 不生成 __pycache__ 和 .pyc 缓存文件（必须在导入项目模块之前设置）
+sys.dont_write_bytecode = True
+
 from core.agent import Agent
 from core.config import load_config
+from core.tools import configure
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -21,7 +25,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ZAgent 智能助手")
     parser.add_argument("--ui", default="tui", choices=("tui",), help="选择前端界面")
     args = parser.parse_args()
-    load_frontend(args.ui)(Agent(load_config()))
+    config = load_config()
+    configure(config)
+    load_frontend(args.ui)(Agent(config))
 
 
 if __name__ == "__main__":
