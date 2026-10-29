@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 import traceback
 
@@ -7,6 +8,7 @@ sys.dont_write_bytecode = True
 
 from core.agent import Agent
 from core.config import load_config
+from core.skills import discover
 from core.tools import configure
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -22,12 +24,14 @@ def load_frontend(name: str):
 
 
 def main() -> None:
+    project_root = os.getcwd()  # 启动时的工作目录即项目根目录
     parser = argparse.ArgumentParser(description="ZAgent 智能助手")
     parser.add_argument("--ui", default="tui", choices=("tui",), help="选择前端界面")
     args = parser.parse_args()
     config = load_config()
-    configure(config)
-    load_frontend(args.ui)(Agent(config))
+    skills = discover(project_root)
+    configure(config, skills)
+    load_frontend(args.ui)(Agent(config, skills=skills))
 
 
 if __name__ == "__main__":

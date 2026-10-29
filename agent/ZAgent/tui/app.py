@@ -1,3 +1,5 @@
+import os
+
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -24,6 +26,7 @@ TOOL_LABELS = {
     "searchWeb": "联网搜索",
     "fetchWeb": "读取网页",
     "RunCli": "运行命令行",
+    "loadSkill": "加载技能",
 }
 
 
@@ -65,6 +68,13 @@ class ChatApp(App):
     def on_mount(self) -> None:
         log = self.query_one("#log", VerticalScroll)
         log.mount(Static(Text("你好，我是 ZAgent。可以问我问题，也可以让我查时间、判断闰年或操作文件。"), classes="welcome"))
+        if self.agent.skills:
+            names = "、".join(skill.name for skill in self.agent.skills)
+            log.mount(Static(Text(f"已加载技能：{names}"), classes="welcome"))
+        else:
+            log.mount(Static(Text(
+                f"未发现技能（项目根：{os.getcwd()}）。请从包含 .agents/skills 的目录启动。"
+            ), classes="welcome"))
         self.query_one("#prompt", Input).focus()
 
     @on(Button.Pressed, "#features")
@@ -73,6 +83,11 @@ class ChatApp(App):
         for i, tool in enumerate(catalog(), 1):
             label = TOOL_LABELS.get(tool.name, tool.name)
             lines.append(f"{i}. {label}：{tool.description}")
+        if self.agent.skills:
+            lines.append("")
+            lines.append("可用技能：")
+            for i, skill in enumerate(self.agent.skills, 1):
+                lines.append(f"{i}. {skill.name}：{skill.description}")
         log = self.query_one("#log", VerticalScroll)
         log.mount(Static(Text("\n".join(lines)), classes="features"))
         log.scroll_end(animate=False)

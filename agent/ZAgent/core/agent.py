@@ -3,15 +3,21 @@ from typing import Iterator
 from .config import Config
 from .events import Completed, Event, Token, ToolFinished, ToolStarted
 from .llm import LLMClient
+from .skills import Skill, system_prompt
 from .tools import execute, schemas
 
 
 class Agent:
     """对话编排：消息历史、流式输出、工具调用。与界面完全解耦。"""
 
-    def __init__(self, config: Config, llm: LLMClient | None = None):
+    def __init__(self, config: Config, llm: LLMClient | None = None,
+                 skills: list[Skill] | None = None):
         self._llm = llm or LLMClient(config)
+        self.skills: list[Skill] = list(skills or [])
         self.messages: list[dict] = []
+        prompt = system_prompt(self.skills)
+        if prompt:
+            self.messages.append({"role": "system", "content": prompt})
 
     def ask(self, prompt: str) -> Iterator[Event]:
         self.messages.append({"role": "user", "content": prompt})
