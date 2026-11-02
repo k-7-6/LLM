@@ -10,6 +10,7 @@ class Config:
     model: str
     search_api_key: str = ""
     search_model: str = "ernie-4.5-turbo-32k"
+    project_root: str = ""
 
 
 def load_config(path: str | None = None) -> Config:
@@ -18,10 +19,18 @@ def load_config(path: str | None = None) -> Config:
     parser.read(path, encoding="utf-8")
     llm = parser["llm"]
     search = parser["search"] if parser.has_section("search") else {}
+    project = parser["project"] if parser.has_section("project") else {}
+
+    root = project.get("root", "").strip()
+    if root and not os.path.isabs(root):
+        # 相对路径以 config.ini 所在目录（ZAgent）为基准
+        root = os.path.normpath(os.path.join(os.path.dirname(path), root))
+
     return Config(
         base_url=llm["base_url"],
         api_key=llm["api_key"],
         model=llm["model"],
         search_api_key=search.get("baidu_qianfan_api_key", "").strip(),
         search_model=search.get("baidu_qianfan_model", "ernie-4.5-turbo-32k").strip(),
+        project_root=root,
     )

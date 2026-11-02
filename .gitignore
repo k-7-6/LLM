@@ -1,1 +1,7 @@
 config.ini
+__pycache__/
+*.pyc
+*.egg-info/
+.srv.log
+*.exe.old
+.mcp.json

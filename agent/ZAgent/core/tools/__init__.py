@@ -5,7 +5,7 @@ from .skill import configure as configure_skills
 __all__ = ["catalog", "configure", "execute", "schemas"]
 
 
-def configure(config, skills=()) -> None:
-    """把配置文件和启动时发现的技能注入对应工具。"""
+def configure(config, skills=(), project_root=None) -> None:
+    """把配置文件、启动时发现的技能和项目根目录注入对应工具。"""
     search.configure(config.search_api_key, config.search_model)
-    configure_skills(list(skills))
+    configure_skills(list(skills), project_root)

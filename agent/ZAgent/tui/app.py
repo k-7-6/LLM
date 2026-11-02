@@ -4,7 +4,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Button, Footer, Input, Static
+from textual.widgets import Footer, Input, Static
 
 from core.agent import Agent
 from core.events import Token, ToolStarted
@@ -27,6 +27,7 @@ TOOL_LABELS = {
     "fetchWeb": "读取网页",
     "RunCli": "运行命令行",
     "loadSkill": "加载技能",
+    "createSkill": "创建技能",
 }
 
 
@@ -37,13 +38,13 @@ class ChatApp(App):
     CSS = """
     #topbar { height: 3; align: center middle; background: $panel; }
     #title { width: 1fr; padding: 0 1; text-style: bold; }
-    #features { margin-right: 1; }
-    #log { height: 1fr; padding: 1 2; }
+    #body { height: 1fr; }
+    #log { width: 1fr; height: 1fr; padding: 1 2; }
+    #sidebar { width: 42; height: 1fr; border-left: solid $primary; padding: 1; }
     .welcome { color: $text-muted; margin-bottom: 1; }
     .user { color: $accent; margin-top: 1; }
     .assistant { margin-bottom: 1; }
     .tool { color: $text-muted; }
-    .features { border: round $primary; padding: 1; margin: 1 0; }
     """
     BINDINGS = [("ctrl+c", "quit", "退出")]
 
@@ -56,10 +57,26 @@ class ChatApp(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="topbar"):
             yield Static(Text("ZAgent 智能助手"), id="title")
-            yield Button("功能列表", id="features")
-        yield VerticalScroll(id="log")
+        with Horizontal(id="body"):
+            yield VerticalScroll(id="log")
+            yield VerticalScroll(self._sidebar(), id="sidebar")
         yield Input(placeholder="输入问题，回车发送（Ctrl+C 退出）", id="prompt")
         yield Footer()
+
+    def _sidebar(self) -> Static:
+        """右侧常驻面板：列出全部工具和已加载技能。"""
+        text = Text()
+        text.append("可用工具\n", style="bold")
+        for i, tool in enumerate(catalog(), 1):
+            label = TOOL_LABELS.get(tool.name, tool.name)
+            text.append(f"{i}. {label}\n", style="bold")
+            text.append(f"   {tool.description}\n", style="dim")
+        if self.agent.skills:
+            text.append("\n可用技能\n", style="bold")
+            for skill in self.agent.skills:
+                text.append(f"- {skill.name}\n")
+                text.append(f"  {skill.description}\n", style="dim")
+        return Static(text)
 
     def action_help_quit(self) -> None:
         """覆盖框架默认的 Ctrl+C 英文提示，直接退出。"""
@@ -75,22 +92,8 @@ class ChatApp(App):
             log.mount(Static(Text(
                 f"未发现技能（项目根：{os.getcwd()}）。请从包含 .agents/skills 的目录启动。"
             ), classes="welcome"))
-        self.query_one("#prompt", Input).focus()
-
-    @on(Button.Pressed, "#features")
-    def _show_features(self) -> None:
-        lines = ["可用功能："]
-        for i, tool in enumerate(catalog(), 1):
-            label = TOOL_LABELS.get(tool.name, tool.name)
-            lines.append(f"{i}. {label}：{tool.description}")
-        if self.agent.skills:
-            lines.append("")
-            lines.append("可用技能：")
-            for i, skill in enumerate(self.agent.skills, 1):
-                lines.append(f"{i}. {skill.name}：{skill.description}")
-        log = self.query_one("#log", VerticalScroll)
-        log.mount(Static(Text("\n".join(lines)), classes="features"))
-        log.scroll_end(animate=False)
+        for message in self.agent.mcp_errors:
+            log.mount(Static(Text(f"MCP: {message}", style="red"), classes="welcome"))
         self.query_one("#prompt", Input).focus()
 
     @on(Input.Submitted)

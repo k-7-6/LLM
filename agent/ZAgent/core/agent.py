@@ -11,9 +11,11 @@ class Agent:
     """对话编排：消息历史、流式输出、工具调用。与界面完全解耦。"""
 
     def __init__(self, config: Config, llm: LLMClient | None = None,
-                 skills: list[Skill] | None = None):
+                 skills: list[Skill] | None = None,
+                 mcp_errors: list[str] | None = None):
         self._llm = llm or LLMClient(config)
         self.skills: list[Skill] = list(skills or [])
+        self.mcp_errors: list[str] = list(mcp_errors or [])
         self.messages: list[dict] = []
         prompt = system_prompt(self.skills)
         if prompt:
