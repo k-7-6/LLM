@@ -27,14 +27,16 @@ class Skill:
     root: str = ""
 
 
-def discover(project_root: str | None = None) -> list[Skill]:
-    """扫描 <项目根>/.agents/skills，返回所有有效的技能元信息。
+def discover(project_root: str | None = None,
+             skills_dir: str = SKILLS_DIR,
+             skill_file: str = SKILL_FILE) -> list[Skill]:
+    """扫描 <项目根>/<skills_dir>，返回所有有效的技能元信息。
 
     无效的技能（缺少 SKILL.md、Frontmatter 不合法等）会被跳过并记录警告，
     不影响其他技能加载。
     """
     root = os.path.abspath(project_root or os.getcwd())
-    base = os.path.join(root, SKILLS_DIR)
+    base = os.path.join(root, skills_dir)
     if not os.path.isdir(base):
         logger.warning("未找到技能目录: %s（项目根: %s）", base, root)
         return []
@@ -45,17 +47,17 @@ def discover(project_root: str | None = None) -> list[Skill]:
         skill_dir = os.path.join(base, entry)
         if not os.path.isdir(skill_dir):
             continue
-        skill_file = os.path.join(skill_dir, SKILL_FILE)
-        if not os.path.isfile(skill_file):
-            logger.warning("技能目录 %s 缺少 %s，已跳过", skill_dir, SKILL_FILE)
+        path = os.path.join(skill_dir, skill_file)
+        if not os.path.isfile(path):
+            logger.warning("技能目录 %s 缺少 %s，已跳过", skill_dir, skill_file)
             continue
         try:
-            skill = _load(skill_file, root)
+            skill = _load(path, root)
         except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as exc:
-            logger.warning("技能 %s 加载失败，已跳过：%s", skill_file, exc)
+            logger.warning("技能 %s 加载失败，已跳过：%s", path, exc)
             continue
         if skill.name in seen:
-            logger.warning("技能名称 %s 重复，已跳过 %s", skill.name, skill_file)
+            logger.warning("技能名称 %s 重复，已跳过 %s", skill.name, path)
             continue
         seen.add(skill.name)
         skills.append(skill)

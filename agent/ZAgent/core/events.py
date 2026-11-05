@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from .context import ContextStats
+
 
 @dataclass(frozen=True)
 class Token:
@@ -27,4 +29,24 @@ class Completed:
     text: str
 
 
-Event = Token | ToolStarted | ToolFinished | Completed
+@dataclass(frozen=True)
+class TurnUsage:
+    """一次模型调用的 Token 用量。"""
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+    estimated: bool = False
+
+
+@dataclass(frozen=True)
+class Cancelled:
+    """本次输出被用户终止；text 为已经生成的部分内容。"""
+    text: str = ""
+
+
+Event = (
+    Token | ToolStarted | ToolFinished | Completed
+    | TurnUsage | Cancelled | ContextStats
+)

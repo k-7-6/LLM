@@ -3,10 +3,32 @@ import subprocess
 
 from .registry import Tool, register
 
-TIMEOUT_SECONDS = 30
+TIMEOUT_SECONDS = 30.0
 MAX_OUTPUT_CHARS = 8000
 HEAD_CHARS = 6000
 TAIL_CHARS = 2000
+
+_timeout = TIMEOUT_SECONDS
+_max_output_chars = MAX_OUTPUT_CHARS
+_head_chars = HEAD_CHARS
+_tail_chars = TAIL_CHARS
+
+
+def configure(config) -> None:
+    global _timeout, _max_output_chars, _head_chars, _tail_chars
+    _timeout = max(
+        1.0, float(getattr(config, "cli_timeout", TIMEOUT_SECONDS)
+                   or TIMEOUT_SECONDS),
+    )
+    _max_output_chars = max(
+        100, int(getattr(config, "cli_max_output_chars", MAX_OUTPUT_CHARS)
+                 or MAX_OUTPUT_CHARS),
+    )
+    _head_chars = max(0, int(getattr(config, "cli_head_chars", HEAD_CHARS)
+                          or HEAD_CHARS))
+    _tail_chars = max(0, int(getattr(config, "cli_tail_chars", TAIL_CHARS)
+                          or TAIL_CHARS))
+    _max_output_chars = max(_max_output_chars, _head_chars + _tail_chars)
 
 
 def _decode(data: bytes) -> str:
@@ -24,13 +46,13 @@ def _clip(text: str) -> str:
     text = text.strip("\n")
     if not text:
         return "（空）"
-    if len(text) <= MAX_OUTPUT_CHARS:
+    if len(text) <= _max_output_chars:
         return text
-    omitted = len(text) - HEAD_CHARS - TAIL_CHARS
+    omitted = len(text) - _head_chars - _tail_chars
     return (
-        text[:HEAD_CHARS].rstrip()
+        text[:_head_chars].rstrip()
         + f"\n…（输出过长，中间省略 {omitted} 字符）…\n"
-        + text[-TAIL_CHARS:].lstrip()
+        + text[-_tail_chars:].lstrip()
     )
 
 
@@ -46,14 +68,14 @@ def _run_cli(raw: dict) -> str:
     shown = " ".join(argv)
 
     try:
-        result = subprocess.run(argv, capture_output=True, timeout=TIMEOUT_SECONDS)
+        result = subprocess.run(argv, capture_output=True, timeout=_timeout)
     except FileNotFoundError:
         return f"错误: 未找到命令 '{command}'，请确认程序已安装并加入 PATH"
     except PermissionError:
         return f"错误: 没有权限执行 '{command}'"
     except subprocess.TimeoutExpired as exc:
         return (
-            f"命令: {shown}\n退出码: 无（执行超过 {TIMEOUT_SECONDS} 秒，已终止）\n"
+            f"命令: {shown}\n退出码: 无（执行超过 {_timeout:.0f} 秒，已终止）\n"
             f"标准输出:\n{_clip(_decode(exc.stdout or b''))}\n\n"
             f"标准错误:\n{_clip(_decode(exc.stderr or b''))}"
         )

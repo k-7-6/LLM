@@ -1,7 +1,8 @@
-"""MCP Client：读取项目 .mcp.json，连接 Streamable HTTP 服务器并注册远程工具。
+"""MCP Client：读取项目 .mcp.json，异步连接 Streamable HTTP 服务器并注册远程工具。
 
 MCP SDK 是异步的，而 Agent 的工具执行是同步的。这里用一个后台事件循环线程
 持有到各服务器的长连接，同步侧通过 run_coroutine_threadsafe 调用。
+连接过程不阻塞 UI：每台服务器连上或失败后都会通过回调推送最新快照。
 """
 
 import asyncio
@@ -12,7 +13,7 @@ import os
 import re
 import threading
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -31,11 +32,46 @@ _FUNCTION_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _INVALID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
 SUPPORTED_TYPES = {"streamable_http", "streamable-http", "http"}
 
+STATUS_CONNECTING = "connecting"
+STATUS_CONNECTED = "connected"
+STATUS_FAILED = "failed"
+STATUS_CLOSED = "closed"
+
 
 @dataclass(frozen=True)
 class McpServer:
     name: str
     url: str
+
+
+@dataclass(frozen=True)
+class McpServerState:
+    """界面展示用的单台服务器状态。"""
+
+    name: str
+    url: str
+    status: str = STATUS_CONNECTING
+    tools: tuple[str, ...] = ()
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class McpSnapshot:
+    """某一时刻全部 MCP 服务器状态的快照，可从任意线程读取。"""
+
+    configured: bool
+    loading: bool
+    config_path: str
+    servers: tuple[McpServerState, ...] = ()
+    errors: tuple[str, ...] = ()
+
+    @property
+    def connected_count(self) -> int:
+        return sum(1 for item in self.servers if item.status == STATUS_CONNECTED)
+
+    @property
+    def tool_count(self) -> int:
+        return sum(len(item.tools) for item in self.servers)
 
 
 def load_mcp_servers(path: str) -> tuple[dict[str, McpServer], list[str]]:
@@ -73,19 +109,38 @@ def load_mcp_servers(path: str) -> tuple[dict[str, McpServer], list[str]]:
 
 
 class McpManager:
-    """管理 MCP 连接，并把远程工具注册进本地工具注册表。"""
+    """管理 MCP 连接，并把远程工具注册进本地工具注册表。
 
-    def __init__(self, project_root: str):
-        self.config_path = os.path.join(project_root, CONFIG_FILE)
-        self.errors: list[str] = []
-        self.connected: list[str] = []
+    `start_async()` 立即返回；连接结果通过 `on_update(snapshot)` 回调推送。
+    """
+
+    def __init__(self, project_root: str,
+                 config_file: str = CONFIG_FILE,
+                 connect_timeout: float = CONNECT_TIMEOUT,
+                 call_timeout: float = CALL_TIMEOUT,
+                 max_tool_name_length: int = MAX_NAME_LENGTH,
+                 on_update=None):
+        self.config_path = os.path.join(project_root, config_file)
+        self.connect_timeout = max(1.0, float(connect_timeout))
+        self.call_timeout = max(1.0, float(call_timeout))
+        self.max_name_length = min(
+            MAX_NAME_LENGTH, max(8, int(max_tool_name_length)),
+        )
+        self._on_update = on_update
+        self._configured = False
+        self._errors: list[str] = []
+        self._states: dict[str, McpServerState] = {}
         self.exposed_tools: dict[str, tuple[str, str]] = {}
+
+        self._state_lock = threading.Lock()
+        self._register_lock = threading.Lock()
+        self._started = False
+        self._shutting_down = False
 
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run_loop, name="mcp-event-loop", daemon=True,
         )
-        self._started = False
         self._sessions: dict[str, ClientSession] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._stop_events: dict[str, asyncio.Event] = {}
@@ -95,67 +150,80 @@ class McpManager:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def connect(self) -> None:
-        """连接全部服务器并注册工具；单个服务器失败不影响其他服务器。"""
-        servers, config_errors = load_mcp_servers(self.config_path)
-        self.errors.extend(config_errors)
-        if not servers:
+    def start_async(self, on_update=None) -> None:
+        """异步连接全部服务器；立即返回，不阻塞调用方。"""
+        if on_update is not None:
+            self._on_update = on_update
+        if self._started:
+            self._notify()
             return
 
-        self._thread.start()
+        servers, config_errors = load_mcp_servers(self.config_path)
+        with self._state_lock:
+            self._configured = os.path.isfile(self.config_path)
+            self._errors = list(config_errors)
+            self._states = {
+                name: McpServerState(name=name, url=server.url)
+                for name, server in servers.items()
+            }
+
+        if not servers:
+            self._notify()
+            return
+
+        try:
+            self._thread.start()
+        except RuntimeError as exc:
+            self._fail_all(f"MCP 事件循环启动失败: {exc}")
+            return
         self._started = True
 
-        ready: dict[str, concurrent.futures.Future] = {}
         for name, server in servers.items():
-            signal = concurrent.futures.Future()
-            ready[name] = signal
-            self._tasks[name] = asyncio.run_coroutine_threadsafe(
-                self._serve(server, signal), self._loop,
-            )
-
-        entries = []
-        for name, signal in ready.items():
             try:
-                result = signal.result(timeout=CONNECT_TIMEOUT + 5)
-            except Exception as exc:
-                self.errors.append(
-                    f"MCP Server '{name}' ({servers[name].url}) 连接失败: "
-                    f"{_describe(exc)}"
+                self._tasks[name] = asyncio.run_coroutine_threadsafe(
+                    self._serve(server), self._loop,
                 )
-                self._tasks[name].cancel()
-                continue
-            self.connected.append(name)
-            for tool in result:
-                entries.append((name, tool))
+            except RuntimeError as exc:
+                self._fail_one(name, f"无法调度 MCP 连接: {exc}")
+        self._notify()
 
-        for (server_name, tool), exposed in zip(
-            entries, self._allocate_names(entries)
-        ):
-            self._register(server_name, tool, exposed)
-
-    async def _serve(self, server: McpServer,
-                     signal: concurrent.futures.Future) -> None:
+    async def _serve(self, server: McpServer) -> None:
         try:
             async with streamable_http_client(server.url) as (read, write):
                 async with ClientSession(read, write) as session:
-                    await asyncio.wait_for(session.initialize(), CONNECT_TIMEOUT)
+                    await asyncio.wait_for(
+                        session.initialize(), self.connect_timeout,
+                    )
                     tools = await self._list_tools(session)
+                    exposed = self._register_tools(server.name, tools)
                     stop = asyncio.Event()
                     self._sessions[server.name] = session
                     self._locks[server.name] = asyncio.Lock()
                     self._stop_events[server.name] = stop
-                    if not signal.done():
-                        signal.set_result(tools)
+                    self._set_state(
+                        server.name,
+                        status=STATUS_CONNECTED,
+                        tools=tuple(exposed),
+                        error="",
+                    )
+                    self._notify()
                     await stop.wait()
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            if not signal.done():
-                signal.set_exception(exc)
-            else:
-                logger.warning("MCP Server %s 连接中断: %s", server.name, exc)
+            self._fail_one(server.name, f"连接失败: {_describe(exc, self.connect_timeout)}")
         finally:
             self._sessions.pop(server.name, None)
             self._locks.pop(server.name, None)
             self._stop_events.pop(server.name, None)
+            with self._state_lock:
+                state = self._states.get(server.name)
+                if state is not None and state.status == STATUS_CONNECTED:
+                    self._states[server.name] = replace(
+                        state, status=STATUS_CLOSED,
+                    )
+            if not self._shutting_down:
+                self._notify()
 
     async def _list_tools(self, session: ClientSession) -> list:
         tools = []
@@ -163,13 +231,21 @@ class McpManager:
         for _ in range(100):  # 防御异常的无限分页
             params = PaginatedRequestParams(cursor=cursor) if cursor else None
             result = await asyncio.wait_for(
-                session.list_tools(params=params), CONNECT_TIMEOUT,
+                session.list_tools(params=params), self.connect_timeout,
             )
             tools.extend(result.tools)
             cursor = getattr(result, "next_cursor", None)
             if not cursor:
                 break
         return tools
+
+    def _register_tools(self, server_name: str, tools: list) -> list[str]:
+        with self._register_lock:
+            entries = [(server_name, tool) for tool in tools]
+            allocated = self._allocate_names(entries)
+            for (_, tool), exposed in zip(entries, allocated):
+                self._register(server_name, tool, exposed)
+            return allocated
 
     def _allocate_names(self, entries) -> list[str]:
         """未冲突时保留原工具名，冲突或名称非法时加服务器前缀。"""
@@ -179,14 +255,19 @@ class McpManager:
 
         for server_name, tool in entries:
             original = tool.name
-            base = original if _FUNCTION_NAME.fullmatch(original) else _sanitize(original)
+            base = (
+                original
+                if _FUNCTION_NAME.fullmatch(original)
+                and len(original) <= self.max_name_length
+                else self._sanitize(original)
+            )
             if counts[original] > 1 or base in reserved:
-                base = _prefix(server_name, original)
+                base = self._prefix(server_name, original)
             candidate = base
             index = 2
             while candidate in reserved:
                 suffix = f"_{index}"
-                candidate = base[:MAX_NAME_LENGTH - len(suffix)] + suffix
+                candidate = base[:self.max_name_length - len(suffix)] + suffix
                 index += 1
             reserved.add(candidate)
             allocated.append(candidate)
@@ -227,18 +308,40 @@ class McpManager:
             async with lock:
                 return await session.call_tool(tool_name, arguments or {})
 
-        future = asyncio.run_coroutine_threadsafe(invoke(), self._loop)
         try:
-            result = future.result(timeout=CALL_TIMEOUT)
+            future = asyncio.run_coroutine_threadsafe(invoke(), self._loop)
+        except RuntimeError as exc:
+            return f"错误: MCP 事件循环不可用: {exc}"
+        try:
+            result = future.result(timeout=self.call_timeout)
         except concurrent.futures.TimeoutError:
             future.cancel()
-            return f"错误: 调用 MCP 工具 '{exposed}' 超时（{CALL_TIMEOUT:.0f} 秒）"
+            return (
+                f"错误: 调用 MCP 工具 '{exposed}' 超时"
+                f"（{self.call_timeout:.0f} 秒）"
+            )
         except Exception as exc:
             return (f"错误: 调用 MCP Server '{server_name}' 的工具 "
                     f"'{tool_name}' 失败: {_describe(exc)}")
         return format_result(result)
 
+    def snapshot(self) -> McpSnapshot:
+        with self._state_lock:
+            servers = tuple(
+                self._states[name] for name in sorted(self._states)
+            )
+            errors = tuple(self._errors)
+            configured = self._configured
+        return McpSnapshot(
+            configured=configured,
+            loading=any(item.status == STATUS_CONNECTING for item in servers),
+            config_path=self.config_path,
+            servers=servers,
+            errors=errors,
+        )
+
     def close(self) -> None:
+        self._shutting_down = True
         if not self._started or not self._thread.is_alive():
             return
         for event in list(self._stop_events.values()):
@@ -247,12 +350,64 @@ class McpManager:
             except RuntimeError:
                 pass
         for future in list(self._tasks.values()):
-            try:
-                future.result(timeout=5)
-            except Exception:
-                pass
-        self._loop.call_soon_threadsafe(self._loop.stop)
+            if not future.done():
+                future.cancel()
+        concurrent.futures.wait(
+            list(self._tasks.values()), timeout=5,
+        )
+        try:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        except RuntimeError:
+            pass
         self._thread.join(timeout=5)
+
+    def _set_state(self, name: str, **changes) -> None:
+        with self._state_lock:
+            state = self._states.get(name)
+            if state is not None:
+                self._states[name] = replace(state, **changes)
+
+    def _fail_one(self, name: str, message: str) -> None:
+        with self._state_lock:
+            state = self._states.get(name)
+            if state is None:
+                return
+            text = f"MCP Server '{name}' ({state.url}) {message}"
+            self._states[name] = replace(
+                state, status=STATUS_FAILED, tools=(), error=text,
+            )
+            if text not in self._errors:
+                self._errors.append(text)
+        self._notify()
+
+    def _fail_all(self, message: str) -> None:
+        with self._state_lock:
+            for name, state in list(self._states.items()):
+                self._states[name] = replace(
+                    state, status=STATUS_FAILED, tools=(), error=message,
+                )
+            if message not in self._errors:
+                self._errors.append(message)
+        self._notify()
+
+    def _notify(self) -> None:
+        callback = self._on_update
+        if callback is None:
+            return
+        snapshot = self.snapshot()
+        try:
+            callback(snapshot)
+        except Exception:
+            logger.exception("MCP 状态回调失败")
+
+    def _sanitize(self, value: str) -> str:
+        clean = _INVALID_CHARS.sub("_", value).strip("_") or "tool"
+        return clean[:self.max_name_length]
+
+    def _prefix(self, server_name: str, tool_name: str) -> str:
+        prefix = self._sanitize(server_name)[:max(1, self.max_name_length - 2)]
+        room = self.max_name_length - len(prefix) - 1
+        return f"{prefix}_{self._sanitize(tool_name)[:max(room, 0)]}"
 
 
 def format_result(result) -> str:
@@ -289,21 +444,12 @@ def format_result(result) -> str:
     return f"错误: {text}" if getattr(result, "is_error", False) else text
 
 
-def _sanitize(value: str) -> str:
-    clean = _INVALID_CHARS.sub("_", value).strip("_") or "tool"
-    return clean[:MAX_NAME_LENGTH]
-
-
-def _prefix(server_name: str, tool_name: str) -> str:
-    prefix = _sanitize(server_name)
-    room = MAX_NAME_LENGTH - len(prefix) - 1
-    return f"{prefix}_{_sanitize(tool_name)[:max(room, 1)]}"
-
-
-def _describe(exc: Exception, depth: int = 0) -> str:
+def _describe(exc: Exception, timeout: float | None = None) -> str:
     """展开 ExceptionGroup，给出最内层、可读的错误原因。"""
     group = getattr(exc, "exceptions", None)
-    if isinstance(group, (list, tuple)) and group and depth < 5:
-        return _describe(group[0], depth + 1)
+    if isinstance(group, (list, tuple)) and group:
+        return _describe(group[0], timeout)
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) and timeout:
+        return f"连接超时（{timeout:.0f} 秒）"
     text = str(exc).strip()
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__

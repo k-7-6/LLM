@@ -5,3 +5,5 @@ __pycache__/
 .srv.log
 *.exe.old
 .mcp.json
+**/.agents/context/
+**/.agents/sessions/

@@ -3,6 +3,18 @@ import os
 
 from .registry import Tool, register
 
+MAX_READ_CHARS = 200_000
+_max_read_chars = MAX_READ_CHARS
+
+
+def configure(config) -> None:
+    global _max_read_chars
+    _max_read_chars = max(
+        1_000,
+        int(getattr(config, "file_max_read_chars", MAX_READ_CHARS)
+            or MAX_READ_CHARS),
+    )
+
 
 def _get_cwd(_args: dict) -> str:
     return os.getcwd()
@@ -26,9 +38,17 @@ def _get_file_type(args: dict) -> str:
 def _read_file(args: dict) -> str:
     try:
         with open(args["path"], encoding="utf-8") as f:
-            return f.read() or "(空文件)"
+            text = f.read(_max_read_chars + 1)
     except UnicodeDecodeError:
         return "不是纯文本文件，无法读取"
+    if not text:
+        return "(空文件)"
+    if len(text) > _max_read_chars:
+        return (
+            text[:_max_read_chars].rstrip()
+            + f"\n\n…（文件过长，已截断，仅显示前 {_max_read_chars:,} 字符）"
+        )
+    return text
 
 
 def _create_file(args: dict) -> str:

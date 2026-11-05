@@ -9,16 +9,25 @@ from .registry import Tool, register
 # 启动时由 configure 注入已发现的技能与项目根目录，handler 通过技能名查找。
 _skills: dict[str, Skill] = {}
 _project_root = ""
+_skills_dir = SKILLS_DIR
+_skill_file = SKILL_FILE
+_max_derived_description = 200
 
 _NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-_MAX_DERIVED_DESCRIPTION = 200
 
 
-def configure(skills: list[Skill], project_root: str | None = None) -> None:
-    global _project_root
+def configure(skills: list[Skill], project_root: str | None = None,
+              config=None) -> None:
+    global _project_root, _skills_dir, _skill_file, _max_derived_description
     _skills.clear()
     _skills.update({skill.name: skill for skill in skills})
     _project_root = os.path.abspath(project_root or os.getcwd())
+    _skills_dir = getattr(config, "skills_dir", SKILLS_DIR) or SKILLS_DIR
+    _skill_file = getattr(config, "skill_file", SKILL_FILE) or SKILL_FILE
+    _max_derived_description = max(
+        20,
+        int(getattr(config, "skill_description_length", 200) or 200),
+    )
 
 
 def _load_skill(raw: dict) -> str:
@@ -54,7 +63,7 @@ def _create_skill(raw: dict) -> str:
         return f"错误: Skill '{name}' 已存在，未创建任何文件"
 
     root = _project_root or os.path.abspath(os.getcwd())
-    skill_dir = os.path.join(root, SKILLS_DIR, name)
+    skill_dir = os.path.join(root, _skills_dir, name)
     if os.path.exists(skill_dir):
         return f"错误: Skill '{name}' 已存在，未创建任何文件"
 
@@ -71,7 +80,7 @@ def _create_skill(raw: dict) -> str:
     except OSError as exc:
         return f"错误: 无法创建技能目录 {skill_dir}: {exc}"
 
-    path = os.path.join(skill_dir, SKILL_FILE)
+    path = os.path.join(skill_dir, _skill_file)
     try:
         with open(path, "x", encoding="utf-8", newline="\n") as f:
             f.write(content)
@@ -143,7 +152,7 @@ def _derive_description(body: str) -> str:
     for line in body.splitlines():
         text = " ".join(line.strip().lstrip("#>*-").split())
         if text:
-            return text[:_MAX_DERIVED_DESCRIPTION]
+            return text[:_max_derived_description]
     return ""
 
 

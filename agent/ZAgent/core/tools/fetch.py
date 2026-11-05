@@ -10,6 +10,33 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+MAX_TIME = 20
+CONNECT_TIMEOUT = 10
+PROCESS_TIMEOUT = 30.0
+
+_max_chars = MAX_CHARS
+_user_agent = USER_AGENT
+_max_time = MAX_TIME
+_connect_timeout = CONNECT_TIMEOUT
+_process_timeout = PROCESS_TIMEOUT
+
+
+def configure(config) -> None:
+    global _max_chars, _user_agent, _max_time, _connect_timeout, _process_timeout
+    _max_chars = max(500, int(getattr(config, "fetch_max_chars", MAX_CHARS) or MAX_CHARS))
+    _user_agent = (
+        getattr(config, "fetch_user_agent", "") or USER_AGENT
+    ).strip() or USER_AGENT
+    _max_time = max(1, int(getattr(config, "fetch_max_time", MAX_TIME) or MAX_TIME))
+    _connect_timeout = max(
+        1, int(getattr(config, "fetch_connect_timeout", CONNECT_TIMEOUT)
+               or CONNECT_TIMEOUT),
+    )
+    _process_timeout = max(
+        1.0,
+        float(getattr(config, "fetch_process_timeout", PROCESS_TIMEOUT)
+              or PROCESS_TIMEOUT),
+    )
 
 
 def _fetch_web(args: dict) -> str:
@@ -26,21 +53,21 @@ def _fetch_web(args: dict) -> str:
         "--compressed",
         "--silent",
         "--show-error",
-        "--max-time", "20",
-        "--connect-timeout", "10",
+        "--max-time", str(_max_time),
+        "--connect-timeout", str(_connect_timeout),
         "--proto", "=http,https",
         "--proto-redir", "=http,https",
-        "--user-agent", USER_AGENT,
+        "--user-agent", _user_agent,
         "--write-out", "\n__STATUS__%{http_code}",
         url,
     ]
 
     try:
-        result = subprocess.run(command, capture_output=True, timeout=30)
+        result = subprocess.run(command, capture_output=True, timeout=_process_timeout)
     except FileNotFoundError:
         return "错误: 未找到 curl 命令，请确认系统已安装 curl"
     except subprocess.TimeoutExpired:
-        return "错误: 获取网页超时（30 秒）"
+        return f"错误: 获取网页超时（{_process_timeout:.0f} 秒）"
     except OSError as exc:
         return f"错误: 无法执行 curl：{exc}"
 
@@ -77,8 +104,8 @@ def _fetch_web(args: dict) -> str:
         return "错误: 未能从该网页提取到正文（可能是动态渲染页面、登录页或非文章页面）"
 
     text = text.strip()
-    if len(text) > MAX_CHARS:
-        text = text[:MAX_CHARS].rstrip() + "\n\n…（内容过长，已截断）"
+    if len(text) > _max_chars:
+        text = text[:_max_chars].rstrip() + "\n\n…（内容过长，已截断）"
 
     return f"来源: {url}\n\n{text}"
 

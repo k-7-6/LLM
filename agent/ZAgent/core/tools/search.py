@@ -5,15 +5,35 @@ import urllib.request
 from .registry import Tool, register
 
 SEARCH_URL = "https://qianfan.baidubce.com/v2/ai_search/chat/completions"
+DEFAULT_MODEL = "ernie-4.5-turbo-32k"
+DEFAULT_TOP_K = 5
+DEFAULT_TIMEOUT = 30.0
+DEFAULT_SNIPPET_CHARS = 120
 
 _api_key = ""
-_model = "ernie-4.5-turbo-32k"
+_model = DEFAULT_MODEL
+_url = SEARCH_URL
+_top_k = DEFAULT_TOP_K
+_timeout = DEFAULT_TIMEOUT
+_snippet_chars = DEFAULT_SNIPPET_CHARS
 
 
-def configure(api_key: str, model: str) -> None:
-    global _api_key, _model
-    _api_key = (api_key or "").strip()
-    _model = (model or "").strip() or _model
+def configure(config) -> None:
+    global _api_key, _model, _url, _top_k, _timeout, _snippet_chars
+    _api_key = (getattr(config, "search_api_key", "") or "").strip()
+    _model = (
+        getattr(config, "search_model", "") or DEFAULT_MODEL
+    ).strip() or DEFAULT_MODEL
+    _url = (getattr(config, "search_url", "") or SEARCH_URL).strip() or SEARCH_URL
+    _top_k = max(1, int(getattr(config, "search_top_k", DEFAULT_TOP_K) or DEFAULT_TOP_K))
+    _timeout = max(
+        1.0, float(getattr(config, "search_timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT)
+    )
+    _snippet_chars = max(
+        20,
+        int(getattr(config, "search_snippet_chars", DEFAULT_SNIPPET_CHARS)
+            or DEFAULT_SNIPPET_CHARS),
+    )
 
 
 def _search_web(args: dict) -> str:
@@ -28,10 +48,10 @@ def _search_web(args: dict) -> str:
         "messages": [{"role": "user", "content": query}],
         "stream": False,
         "search_source": "baidu_search_v2",
-        "resource_type_filter": [{"type": "web", "top_k": 5}],
+        "resource_type_filter": [{"type": "web", "top_k": _top_k}],
     }
     request = urllib.request.Request(
-        SEARCH_URL,
+        _url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -42,7 +62,7 @@ def _search_web(args: dict) -> str:
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=_timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -75,8 +95,8 @@ def _search_web(args: dict) -> str:
             title = ref.get("title") or "(无标题)"
             url = ref.get("url") or ""
             snippet = (ref.get("content") or "").strip()
-            if len(snippet) > 120:
-                snippet = snippet[:120] + "…"
+            if len(snippet) > _snippet_chars:
+                snippet = snippet[:_snippet_chars] + "…"
             lines.append(f"{i}. {title}")
             if url:
                 lines.append(f"   {url}")

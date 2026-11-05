@@ -7,10 +7,7 @@ import traceback
 sys.dont_write_bytecode = True
 
 from core.agent import Agent
-from core.config import load_config
-from core.mcp import McpManager
-from core.skills import discover
-from core.tools import configure
+from core.config import ensure_config
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -43,21 +40,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ZAgent 智能助手")
     parser.add_argument("--ui", default="tui", choices=("tui",), help="选择前端界面")
     parser.add_argument("--project", help="项目根目录（默认取 config.ini 的 [project] root，否则为当前目录）")
+    parser.add_argument("--config", help="配置文件路径（默认查找当前目录的 config.ini）")
     args = parser.parse_args()
-    config = load_config()
+
+    config, created = ensure_config(args.config)
     project_root = resolve_project_root(args.project, config.project_root)
     os.chdir(project_root)  # 让文件工具、.mcp.json、技能都基于项目根目录
-    skills = discover(project_root)
-    configure(config, skills, project_root)
-    mcp = McpManager(project_root)
+    agent = Agent(config, project_root=project_root)
     try:
-        mcp.connect()
-    except Exception as exc:
-        mcp.errors.append(f"MCP 初始化失败: {exc}")
-    try:
-        load_frontend(args.ui)(Agent(config, skills=skills, mcp_errors=mcp.errors))
+        load_frontend(args.ui)(agent, config_notice=created)
     finally:
-        mcp.close()
+        agent.close()
 
 
 if __name__ == "__main__":
