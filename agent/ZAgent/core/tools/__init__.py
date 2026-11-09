@@ -10,6 +10,6 @@ def configure(config, skills=(), project_root=None) -> None:
     search.configure(config)
     fetch.configure(config)
     cli.configure(config)
-    files.configure(config)
+    files.configure(config, project_root)
     configure_skills(list(skills), project_root, config)
     recall.configure(project_root, config)

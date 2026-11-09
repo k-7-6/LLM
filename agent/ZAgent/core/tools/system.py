@@ -1,14 +1,12 @@
-import subprocess
+from datetime import datetime
 
 from .registry import Tool, register
 
 
 def _getdate(_args: dict) -> str:
-    out = subprocess.run(
-        "date /T && time /T",
-        shell=True, capture_output=True, text=True, errors="replace",
-    )
-    return out.stdout.strip() or out.stderr.strip()
+    now = datetime.now()
+    weekday = "一二三四五六日"[now.weekday()]
+    return now.strftime("%Y-%m-%d %H:%M:%S") + f" 星期{weekday}"
 
 
 def _isleapyear(args: dict) -> str:

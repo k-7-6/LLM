@@ -12,13 +12,15 @@ _project_root = ""
 _skills_dir = SKILLS_DIR
 _skill_file = SKILL_FILE
 _max_derived_description = 200
+_max_load_chars = 20_000
 
 _NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def configure(skills: list[Skill], project_root: str | None = None,
               config=None) -> None:
-    global _project_root, _skills_dir, _skill_file, _max_derived_description
+    global _project_root, _skills_dir, _skill_file
+    global _max_derived_description, _max_load_chars
     _skills.clear()
     _skills.update({skill.name: skill for skill in skills})
     _project_root = os.path.abspath(project_root or os.getcwd())
@@ -27,6 +29,10 @@ def configure(skills: list[Skill], project_root: str | None = None,
     _max_derived_description = max(
         20,
         int(getattr(config, "skill_description_length", 200) or 200),
+    )
+    _max_load_chars = max(
+        1_000,
+        int(getattr(config, "skill_max_load_chars", 20_000) or 20_000),
     )
 
 
@@ -39,7 +45,7 @@ def _load_skill(raw: dict) -> str:
 
     filename = str(raw.get("filename", "") or "").strip() or None
     try:
-        return read(skill, filename)
+        text = read(skill, filename)
     except AmbiguousResource as exc:
         lines = [f"错误: 技能 '{name}' 中有多个名为 '{exc.filename}' 的文件，"
                  "请用 filename 指定其中一个："]
@@ -47,6 +53,14 @@ def _load_skill(raw: dict) -> str:
         return "\n".join(lines)
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         return f"错误: {exc}"
+
+    if len(text) > _max_load_chars:
+        text = (
+            text[:_max_load_chars].rstrip()
+            + f"\n\n…（内容过长，已截断到 {_max_load_chars:,} 字符；"
+            "可用 filename 读取具体文件）"
+        )
+    return text
 
 
 def _create_skill(raw: dict) -> str:

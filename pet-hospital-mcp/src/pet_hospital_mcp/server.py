@@ -10,7 +10,11 @@ from starlette.routing import Mount
 
 from pet_hospital_mcp.config import Config
 from pet_hospital_mcp.rest_client import PetHospitalClient
-from pet_hospital_mcp.tools.list_pets import TOOL_DESCRIPTION, TOOL_NAME, _make_tool_func
+from pet_hospital_mcp.tools.list_pets import (
+    TOOL_DESCRIPTION,
+    TOOL_NAME,
+    _make_flat_tool_func,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +33,7 @@ def create_server(config: Config) -> tuple[MCPServer, Starlette]:
     )
 
     rest_client = PetHospitalClient(config)
-    tool_fn = _make_tool_func(config, rest_client)
+    tool_fn = _make_flat_tool_func(config, rest_client)
 
     server.add_tool(
         tool_fn,
@@ -49,11 +53,14 @@ def create_server(config: Config) -> tuple[MCPServer, Starlette]:
     from pet_hospital_mcp.health import create_app as health_app_factory
     health_app = health_app_factory(config)
 
+    # Health routes must come before the catch-all MCP mount, and the MCP
+    # session manager needs the mounted app's lifespan to initialize.
     combined = Starlette(
         routes=[
-            Mount("/", app=mcp_app),
             *health_app.routes,
+            Mount("/", app=mcp_app),
         ],
+        lifespan=mcp_app.router.lifespan_context,
     )
 
     return server, combined

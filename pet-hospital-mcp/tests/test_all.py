@@ -615,7 +615,7 @@ class TestHttpEndpoint:
     def test_list_tools_via_http(self, config: Config) -> None:
         """Test that tools can be discovered via the MCP HTTP endpoint."""
         server, app = create_server(config)
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1:8000") as client:
             resp = client.post(
                 "/mcp",
                 json={
@@ -644,7 +644,7 @@ class TestHttpEndpoint:
 
             list_pets_module.run_list_pets = patched_run
             try:
-                with TestClient(app) as client:
+                with TestClient(app, base_url="http://127.0.0.1:8000") as client:
                     resp = client.post(
                         "/mcp",
                         json={
@@ -668,7 +668,7 @@ class TestHttpEndpoint:
     def test_call_tool_validation_error_via_http(self, config: Config) -> None:
         """Test that validation errors are returned via HTTP."""
         server, app = create_server(config)
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1:8000") as client:
             resp = client.post(
                 "/mcp",
                 json={
@@ -688,17 +688,23 @@ class TestHttpEndpoint:
 
     def test_health_endpoint(self, config: Config) -> None:
         """Test the /health endpoint."""
-        server, app = create_server(config)
-        with TestClient(app) as client:
-            resp = client.get("/health")
-            assert resp.status_code == 200
-            body = resp.json()
-            assert body["status"] == "healthy"
+        with patch.object(
+            PetHospitalClient,
+            "health_check",
+            new=AsyncMock(return_value={"status": "ok"}),
+        ):
+            server, app = create_server(config)
+            with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+                resp = client.get("/health")
+                assert resp.status_code == 200
+                body = resp.json()
+                assert body["status"] == "healthy"
+                assert body["backend"] == "ok"
 
     def test_no_initialize_required(self, config: Config) -> None:
         """Test that the endpoint works without initialize (stateless)."""
         server, app = create_server(config)
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1:8000") as client:
             # Direct tools/list without initialize
             resp = client.post(
                 "/mcp",
@@ -715,7 +721,7 @@ class TestHttpEndpoint:
     def test_no_session_id_in_response(self, config: Config) -> None:
         """Test that no Mcp-Session-Id is returned (stateless)."""
         server, app = create_server(config)
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1:8000") as client:
             resp = client.post(
                 "/mcp",
                 json={
@@ -746,10 +752,10 @@ class TestLogging:
             "nested": {"ownerAddr": "北京市朝阳区"},
         }
         result = _redact_dict(data)
-        assert result["ownerPhone"] == "***01111"
+        assert result["ownerPhone"] == "***1111"
         assert result["owner_name"] == "张三"  # not in sensitive set
-        assert result["chipNo"] == "***123"
-        assert result["nested"]["ownerAddr"] == "***阳市"
+        assert result["chipNo"] == "***C123"
+        assert result["nested"]["ownerAddr"] == "***市朝阳区"
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from datetime import datetime
 from typing import Callable, Iterator
 
@@ -386,11 +387,25 @@ class Agent:
         )
         tools = schemas()
         tool_tokens = estimate_tools_tokens(tools)
+        started = time.monotonic()
+        steps = 0
 
         while True:
             if cancelled():
                 yield Cancelled()
                 return
+            if self.config.max_steps and steps >= self.config.max_steps:
+                raise RuntimeError(
+                    f"本轮任务已达到最大步数（{self.config.max_steps}），已停止。"
+                    "可在 config.ini 的 [agent] 中调整 max_steps。"
+                )
+            if (self.config.loop_timeout
+                    and time.monotonic() - started >= self.config.loop_timeout):
+                raise RuntimeError(
+                    f"本轮任务已超过 {self.config.loop_timeout:.0f} 秒，已停止。"
+                    "可在 config.ini 的 [agent] 中调整 loop_timeout。"
+                )
+            steps += 1
 
             reply = ""
             calls = {}

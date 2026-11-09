@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import time
 from functools import partial
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
 
 from mcp.types import CallToolResult, TextContent
+from pydantic import Field
 
 from ..config import Config
 from ..errors import ErrorCode
@@ -218,3 +219,55 @@ def _make_tool_func(
 run_list_pets: Callable[[Config, PetHospitalClient, dict[str, Any]], Any] = (
     lambda config, client, arguments: _make_tool_func(config, client)(arguments)
 )
+
+
+def _make_flat_tool_func(
+    config: Config, client: PetHospitalClient
+) -> Callable[..., Any]:
+    """Build the MCP-facing tool with one parameter per query field.
+
+    Registering ``tool_fn(arguments: dict)`` makes the MCP schema a single
+    opaque ``arguments`` object, so clients cannot see or validate the real
+    fields. This wrapper exposes the fields directly and delegates to
+    ``run_list_pets`` (looked up at call time so tests can patch it).
+    """
+
+    async def tool_fn(
+        q: Annotated[str | None, Field(description="全文检索关键词")] = None,
+        name: Annotated[str | None, Field(description="宠物名")] = None,
+        ownerName: Annotated[str | None, Field(description="主人姓名")] = None,
+        ownerPhone: Annotated[str | None, Field(description="主人电话")] = None,
+        species: Annotated[str | None, Field(description="种类：犬/猫/兔/鸟/仓鼠/爬宠/其他")] = None,
+        doctor: Annotated[str | None, Field(description="主治医生")] = None,
+        disease: Annotated[str | None, Field(description="疾病或诊断")] = None,
+        status: Annotated[str | None, Field(description="就诊状态")] = None,
+        min: Annotated[float | None, Field(ge=0, description="最低总花费")] = None,
+        max: Annotated[float | None, Field(ge=0, description="最高总花费")] = None,
+        sortBy: Annotated[str | None, Field(description="排序字段")] = None,
+        order: Annotated[str | None, Field(description="asc 或 desc")] = None,
+        page: Annotated[int, Field(ge=1, description="页码，从 1 开始")] = 1,
+        pageSize: Annotated[int, Field(ge=1, le=500, description="每页条数")] = 20,
+    ) -> CallToolResult:
+        arguments = {
+            "q": q,
+            "name": name,
+            "ownerName": ownerName,
+            "ownerPhone": ownerPhone,
+            "species": species,
+            "doctor": doctor,
+            "disease": disease,
+            "status": status,
+            "min": min,
+            "max": max,
+            "sortBy": sortBy,
+            "order": order,
+            "page": page,
+            "pageSize": pageSize,
+        }
+        return await run_list_pets(
+            config,
+            client,
+            {key: value for key, value in arguments.items() if value is not None},
+        )
+
+    return tool_fn

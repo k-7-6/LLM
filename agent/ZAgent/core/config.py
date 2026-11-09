@@ -20,6 +20,12 @@ max_retries = 2
 # 项目根目录；留空表示当前目录。相对路径以本配置文件所在目录为基准。
 root =
 
+[agent]
+# 单轮任务最多允许多少次模型调用（0 表示不限制）
+max_steps = 30
+# 单轮任务的总超时秒数（0 表示不限制）
+loop_timeout = 600
+
 [context]
 # 0 表示使用 default_window，并在界面上标记为“默认”
 window = 0
@@ -38,6 +44,8 @@ agents_file = AGENTS.md
 dir = .agents/skills
 file = SKILL.md
 max_description_length = 200
+# loadSkill 单次返回的最大字符数，超出会截断
+max_load_chars = 20000
 
 [mcp]
 config_file = .mcp.json
@@ -73,6 +81,10 @@ snippet_radius = 180
 
 [files]
 max_read_chars = 200000
+# 文件工具允许访问的根目录；留空表示项目根目录
+root =
+# 是否允许覆盖写入、删除等危险操作；默认关闭
+allow_dangerous_ops = false
 """
 
 
@@ -84,6 +96,9 @@ class Config:
 
     request_timeout: float = 120.0
     max_retries: int = 2
+
+    max_steps: int = 30
+    loop_timeout: float = 600.0
 
     search_api_key: str = ""
     search_model: str = "ernie-4.5-turbo-32k"
@@ -107,6 +122,7 @@ class Config:
     skills_dir: str = ".agents/skills"
     skill_file: str = "SKILL.md"
     skill_description_length: int = 200
+    skill_max_load_chars: int = 20_000
 
     mcp_config_file: str = ".mcp.json"
     mcp_connect_timeout: float = 20.0
@@ -132,6 +148,8 @@ class Config:
     recall_snippet_radius: int = 180
 
     file_max_read_chars: int = 200_000
+    files_root: str = ""
+    files_allow_dangerous: bool = False
 
 
 def app_config_path() -> str:
@@ -201,6 +219,12 @@ def load_config(path: str | None = None) -> Config:
     if root and not os.path.isabs(root):
         root = os.path.normpath(os.path.join(os.path.dirname(path), root))
 
+    files_root = _text(parser, "files", "root", "")
+    if files_root and not os.path.isabs(files_root):
+        files_root = os.path.normpath(
+            os.path.join(os.path.dirname(path), files_root)
+        )
+
     context_window = _int(parser, "context", "window", 0, minimum=0)
     summary_max = _int(parser, "context", "summary_max_tokens", 6_000, minimum=100)
     summary_target = _int(
@@ -221,6 +245,11 @@ def load_config(path: str | None = None) -> Config:
             parser, "llm", "request_timeout", 120.0, minimum=1.0,
         ),
         max_retries=_int(parser, "llm", "max_retries", 2, minimum=0),
+
+        max_steps=_int(parser, "agent", "max_steps", 30, minimum=0),
+        loop_timeout=_float(
+            parser, "agent", "loop_timeout", 600.0, minimum=0.0,
+        ),
 
         search_api_key=_text(parser, "search", "baidu_qianfan_api_key", ""),
         search_model=_text(
@@ -258,6 +287,9 @@ def load_config(path: str | None = None) -> Config:
         skill_file=_text(parser, "skills", "file", "SKILL.md"),
         skill_description_length=_int(
             parser, "skills", "max_description_length", 200, minimum=20,
+        ),
+        skill_max_load_chars=_int(
+            parser, "skills", "max_load_chars", 20_000, minimum=1_000,
         ),
 
         mcp_config_file=_text(parser, "mcp", "config_file", ".mcp.json"),
@@ -303,6 +335,10 @@ def load_config(path: str | None = None) -> Config:
         file_max_read_chars=_int(
             parser, "files", "max_read_chars", 200_000, minimum=1_000,
         ),
+        files_root=files_root,
+        files_allow_dangerous=_bool(
+            parser, "files", "allow_dangerous_ops", False,
+        ),
     )
 
 
@@ -336,6 +372,17 @@ def _float(parser: configparser.ConfigParser, section: str, key: str,
     if maximum is not None:
         value = min(maximum, value)
     return float(value)
+
+
+def _bool(parser: configparser.ConfigParser, section: str, key: str,
+          default: bool = False) -> bool:
+    try:
+        raw = parser.get(section, key, fallback="").strip().lower()
+    except configparser.Error:
+        return default
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
 
 
 def _number(parser: configparser.ConfigParser, section: str, key: str,

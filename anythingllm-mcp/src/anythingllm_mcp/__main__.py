@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from .config import Config
+from .config import Config, ConfigError
 from .server import create_server
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -28,7 +28,13 @@ async def _run(config: Config) -> None:
 
 
 def main() -> None:
-    asyncio.run(_run(Config.from_env()))
+    config = Config.from_env()
+    try:
+        config.validate()
+    except ConfigError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(2)
+    asyncio.run(_run(config))
 
 
 if __name__ == "__main__":

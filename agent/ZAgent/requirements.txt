@@ -1,0 +1,7 @@
+# ZAgent 运行时依赖（Python 3.11+）
+mcp==2.0.0
+openai>=1.60
+textual>=1.0
+rich>=13.0
+PyYAML>=6.0
+trafilatura>=1.8

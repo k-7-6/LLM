@@ -3,7 +3,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 .srv.log
+*.exe
 *.exe.old
+*.db
 .mcp.json
+.pytest_cache/
 **/.agents/context/
 **/.agents/sessions/
